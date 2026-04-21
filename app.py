@@ -34,6 +34,12 @@ if "current_screen" not in st.session_state:
 if "finwise_result" not in st.session_state:
     st.session_state.finwise_result = None
 
+if "finwise_ai_explanation" not in st.session_state:
+    st.session_state.finwise_ai_explanation = None
+
+if "finwise_chat_history" not in st.session_state:
+    st.session_state.finwise_chat_history = []
+
 # -----------------------------
 # Sidebar navigation
 # -----------------------------
