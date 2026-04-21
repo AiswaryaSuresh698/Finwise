@@ -394,3 +394,115 @@ elif screen == "Screen 3 - Tax Summary":
         file_name="finwise_tax_summary.csv",
         mime="text/csv"
     )
+
+# -----------------------------
+# SCREEN 4 - AI ASSISTANT
+# -----------------------------
+elif screen == "Screen 4 - AI Assistant":
+    st.subheader("Screen 4: AI Explanation & Ask FinWise")
+
+    if st.session_state.finwise_result is None:
+        st.warning("Please complete Screen 3 and run FinWise analysis first.")
+        st.stop()
+
+    import os
+    from core.ai_helper import get_openai_client, generate_ai_explanation, answer_finwise_chat
+
+    # Get API key
+    api_key = None
+
+    try:
+        api_key = st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        st.error("OpenAI API key not found. Add OPENAI_API_KEY to Streamlit secrets or environment variables.")
+        st.stop()
+
+    client = get_openai_client(api_key)
+    result = st.session_state.finwise_result
+
+    tab1, tab2 = st.tabs(["AI Explanation", "Ask FinWise"])
+
+    # -----------------------------
+    # TAB 1 - AI EXPLANATION
+    # -----------------------------
+    with tab1:
+        st.write("Generate a simple explanation of your tax summary and savings opportunities.")
+
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Generate AI Explanation", type="primary", use_container_width=True):
+                with st.spinner("Generating AI explanation..."):
+                    explanation = generate_ai_explanation(
+                        client=client,
+                        finwise_result=result,
+                        user_type="Canadian freelancer"
+                    )
+                    st.session_state.finwise_ai_explanation = explanation
+
+        with col2:
+            if st.button("Regenerate Explanation", use_container_width=True):
+                with st.spinner("Refreshing explanation..."):
+                    explanation = generate_ai_explanation(
+                        client=client,
+                        finwise_result=result,
+                        user_type="Canadian freelancer"
+                    )
+                    st.session_state.finwise_ai_explanation = explanation
+
+        if st.session_state.finwise_ai_explanation:
+            st.write("### AI Explanation")
+            st.markdown(st.session_state.finwise_ai_explanation)
+        else:
+            st.info("Click 'Generate AI Explanation' to create a summary.")
+
+    # -----------------------------
+    # TAB 2 - CHATBOT
+    # -----------------------------
+    with tab2:
+        st.write("Ask questions about your uploaded transactions, deductions, and tax-saving opportunities.")
+
+        # show chat history
+        for msg in st.session_state.finwise_chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        user_question = st.chat_input("Ask FinWise something...")
+
+        if user_question:
+            st.session_state.finwise_chat_history.append({
+                "role": "user",
+                "content": user_question
+            })
+
+            with st.chat_message("user"):
+                st.markdown(user_question)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    answer = answer_finwise_chat(
+                        client=client,
+                        finwise_result=result,
+                        user_question=user_question,
+                        chat_history=st.session_state.finwise_chat_history,
+                    )
+                    st.markdown(answer)
+
+            st.session_state.finwise_chat_history.append({
+                "role": "assistant",
+                "content": answer
+            })
+
+        col_clear1, col_clear2 = st.columns([1, 1])
+
+        with col_clear1:
+            if st.button("Clear Chat"):
+                st.session_state.finwise_chat_history = []
+                st.rerun()
+
+        with col_clear2:
+            if st.button("Clear AI Explanation"):
+                st.session_state.finwise_ai_explanation = None
+                st.rerun()
