@@ -45,7 +45,7 @@ screen = st.sidebar.radio(
         "Screen 3 - Tax Summary"
     ]
 )
-)
+
 
 # -----------------------------
 # SCREEN 1 - UPLOAD + MAPPING
