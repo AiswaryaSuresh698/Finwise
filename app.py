@@ -31,14 +31,20 @@ if "column_mapping" not in st.session_state:
 if "current_screen" not in st.session_state:
     st.session_state.current_screen = "Screen 1"
 
+if "finwise_result" not in st.session_state:
+    st.session_state.finwise_result = None
+
 # -----------------------------
 # Sidebar navigation
 # -----------------------------
-st.sidebar.header("Navigation")
 screen = st.sidebar.radio(
     "Go to",
-    ["Screen 1 - Upload", "Screen 2 - Review Categories"],
-    index=0 if st.session_state.current_screen == "Screen 1" else 1
+    [
+        "Screen 1 - Upload",
+        "Screen 2 - Review Categories",
+        "Screen 3 - Tax Summary"
+    ]
+)
 )
 
 # -----------------------------
@@ -257,5 +263,127 @@ elif screen == "Screen 2 - Review Categories":
         "Download categorized transactions CSV",
         data=csv,
         file_name="categorized_transactions.csv",
+        mime="text/csv"
+    )
+
+# -----------------------------
+# SCREEN 3 - TAX SUMMARY
+# -----------------------------
+elif screen == "Screen 3 - Tax Summary":
+    st.subheader("Screen 3: Tax Summary")
+
+    if st.session_state.categorized_df is None:
+        st.warning("Please complete Screen 1 and Screen 2 first.")
+        st.stop()
+
+    from core.brain import run_finwise_brain
+
+    col_a, col_b = st.columns([1, 1])
+
+    with col_a:
+        if st.button("Run FinWise Analysis", type="primary", use_container_width=True):
+            result = run_finwise_brain(st.session_state.categorized_df)
+            st.session_state.finwise_result = result
+            st.success("FinWise analysis completed.")
+
+    with col_b:
+        if st.button("Refresh Analysis", use_container_width=True):
+            result = run_finwise_brain(st.session_state.categorized_df)
+            st.session_state.finwise_result = result
+            st.success("Analysis refreshed.")
+
+    if st.session_state.finwise_result is None:
+        st.info("Click 'Run FinWise Analysis' to generate your tax summary.")
+        st.stop()
+
+    result = st.session_state.finwise_result
+
+    tax_summary = result["tax_summary"]
+    category_summary = result["category_summary"]
+    transactions = result["transactions"]
+    opportunities = result["opportunities"]
+    summary_text = result["summary_text"]
+
+    # -----------------------------
+    # SUMMARY CARDS
+    # -----------------------------
+    st.write("## Tax Summary")
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Total Income", f"${tax_summary['total_income']:,.2f}")
+    m2.metric("Total Expenses", f"${tax_summary['total_expense']:,.2f}")
+    m3.metric("Deductible Expenses", f"${tax_summary['total_deductible']:,.2f}")
+    m4.metric("Taxable Income", f"${tax_summary['taxable_income']:,.2f}")
+    m5.metric("Estimated Tax", f"${tax_summary['estimated_tax']:,.2f}")
+
+    # -----------------------------
+    # OPPORTUNITIES
+    # -----------------------------
+    st.write("## Tax-Saving Opportunities")
+
+    if opportunities:
+        for opp in opportunities:
+            with st.container():
+                st.markdown(f"### {opp['title']}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Possible Tax Saving", f"${opp['estimated_tax_saving']:,.2f}")
+                c2.metric("Estimated Amount", f"${opp['estimated_amount']:,.2f}")
+                c3.metric("Confidence", opp["confidence"].title())
+
+                st.write(f"**Action:** {opp['action']}")
+                if "transaction_count" in opp:
+                    st.caption(f"Related transactions: {opp['transaction_count']}")
+                st.divider()
+    else:
+        st.success("No major tax-saving opportunities detected yet.")
+
+    # -----------------------------
+    # CATEGORY SUMMARY
+    # -----------------------------
+    st.write("## Category Summary")
+    st.dataframe(category_summary, use_container_width=True)
+
+    # -----------------------------
+    # DETAILED TRANSACTIONS
+    # -----------------------------
+    st.write("## Detailed Transactions with Tax Treatment")
+
+    display_cols = [
+        "date",
+        "description",
+        "amount",
+        "transaction_type",
+        "category",
+        "deductible_percent",
+        "deductible_amount",
+        "rule_type",
+        "rule_explanation"
+    ]
+
+    available_cols = [col for col in display_cols if col in transactions.columns]
+
+    st.dataframe(
+        transactions[available_cols],
+        use_container_width=True
+    )
+
+    # -----------------------------
+    # EXPLANATION
+    # -----------------------------
+    st.write("## FinWise Explanation")
+    st.text_area(
+        "Summary",
+        value=summary_text,
+        height=250
+    )
+
+    # -----------------------------
+    # DOWNLOAD ENRICHED CSV
+    # -----------------------------
+    csv = transactions.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Tax-Enriched Transactions CSV",
+        data=csv,
+        file_name="finwise_tax_summary.csv",
         mime="text/csv"
     )
