@@ -272,6 +272,7 @@ elif screen == "Screen 2 - Review Categories":
         file_name="categorized_transactions.csv",
         mime="text/csv"
     )
+    
 
 # -----------------------------
 # SCREEN 3 - TAX SUMMARY
