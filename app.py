@@ -1,5 +1,7 @@
+import os
 import streamlit as st
 import pandas as pd
+
 from utils import (
     load_file,
     guess_column_mapping,
@@ -8,10 +10,13 @@ from utils import (
     get_category_options
 )
 
+from core.brain import run_finwise_brain
+
+
 st.set_page_config(page_title="FinWise Tax", layout="wide")
 
 st.title("FinWise Tax")
-st.caption("Upload transactions and review categorized expenses")
+st.caption("Upload transactions, review categories, analyze tax savings, and ask AI questions.")
 
 # -----------------------------
 # Session state setup
@@ -39,6 +44,7 @@ if "finwise_ai_explanation" not in st.session_state:
 
 if "finwise_chat_history" not in st.session_state:
     st.session_state.finwise_chat_history = []
+
 
 # -----------------------------
 # Sidebar navigation
@@ -82,6 +88,7 @@ if screen == "Screen 1 - Upload":
             select_options = ["-- Select --"] + cols
 
             col1, col2 = st.columns(2)
+
             with col1:
                 date_col = st.selectbox(
                     "Date column",
@@ -89,12 +96,14 @@ if screen == "Screen 1 - Upload":
                     index=select_options.index(guessed.get("date", "-- Select --"))
                     if guessed.get("date", "-- Select --") in select_options else 0
                 )
+
                 description_col = st.selectbox(
                     "Description / Merchant column",
                     select_options,
                     index=select_options.index(guessed.get("description", "-- Select --"))
                     if guessed.get("description", "-- Select --") in select_options else 0
                 )
+
                 amount_col = st.selectbox(
                     "Amount column",
                     select_options,
@@ -109,12 +118,14 @@ if screen == "Screen 1 - Upload":
                     index=select_options.index(guessed.get("type", "-- Select --"))
                     if guessed.get("type", "-- Select --") in select_options else 0
                 )
+
                 debit_col = st.selectbox(
                     "Debit column (optional)",
                     select_options,
                     index=select_options.index(guessed.get("debit", "-- Select --"))
                     if guessed.get("debit", "-- Select --") in select_options else 0
                 )
+
                 credit_col = st.selectbox(
                     "Credit column (optional)",
                     select_options,
@@ -145,7 +156,17 @@ if screen == "Screen 1 - Upload":
                     st.error("Provide either Amount column OR both Debit and Credit columns.")
                 else:
                     normalized_df = normalize_transactions(raw_df, mapping)
+
+                    # Optional safety: add transaction_id if missing
+                    if "transaction_id" not in normalized_df.columns:
+                        normalized_df = normalized_df.reset_index(drop=True)
+                        normalized_df["transaction_id"] = range(1, len(normalized_df) + 1)
+
                     st.session_state.mapped_df = normalized_df
+                    st.session_state.categorized_df = None
+                    st.session_state.finwise_result = None
+                    st.session_state.finwise_ai_explanation = None
+                    st.session_state.finwise_chat_history = []
 
                     st.success("Transactions normalized successfully.")
                     st.write("### Normalized transaction preview")
@@ -155,6 +176,7 @@ if screen == "Screen 1 - Upload":
 
         except Exception as e:
             st.error(f"Error reading file: {e}")
+
 
 # -----------------------------
 # SCREEN 2 - CATEGORY REVIEW
@@ -169,6 +191,11 @@ elif screen == "Screen 2 - Review Categories":
 
     if st.session_state.categorized_df is None:
         categorized_df = categorize_transactions(st.session_state.mapped_df.copy())
+
+        if "transaction_id" not in categorized_df.columns:
+            categorized_df = categorized_df.reset_index(drop=True)
+            categorized_df["transaction_id"] = range(1, len(categorized_df) + 1)
+
         st.session_state.categorized_df = categorized_df
 
     df = st.session_state.categorized_df.copy()
@@ -178,18 +205,24 @@ elif screen == "Screen 2 - Review Categories":
 
     with f1:
         type_filter = st.selectbox("Transaction Type", ["All", "income", "expense"])
+
     with f2:
         confidence_filter = st.selectbox("Confidence", ["All", "high", "medium", "low"])
+
     with f3:
         search_text = st.text_input("Search description")
 
     filtered_df = df.copy()
 
     if type_filter != "All":
-        filtered_df = filtered_df[filtered_df["transaction_type"].str.lower() == type_filter]
+        filtered_df = filtered_df[
+            filtered_df["transaction_type"].astype(str).str.lower() == type_filter
+        ]
 
     if confidence_filter != "All":
-        filtered_df = filtered_df[filtered_df["category_confidence"].str.lower() == confidence_filter]
+        filtered_df = filtered_df[
+            filtered_df["category_confidence"].astype(str).str.lower() == confidence_filter
+        ]
 
     if search_text.strip():
         filtered_df = filtered_df[
@@ -199,23 +232,41 @@ elif screen == "Screen 2 - Review Categories":
     st.write("### Summary")
     s1, s2, s3, s4 = st.columns(4)
     s1.metric("Rows", len(filtered_df))
-    s2.metric("Income", f"{filtered_df.loc[filtered_df['transaction_type']=='income', 'amount'].sum():,.2f}")
-    s3.metric("Expense", f"{filtered_df.loc[filtered_df['transaction_type']=='expense', 'amount'].sum():,.2f}")
+    s2.metric(
+        "Income",
+        f"{filtered_df.loc[filtered_df['transaction_type'].astype(str).str.lower() == 'income', 'amount'].sum():,.2f}"
+    )
+    s3.metric(
+        "Expense",
+        f"{filtered_df.loc[filtered_df['transaction_type'].astype(str).str.lower() == 'expense', 'amount'].sum():,.2f}"
+    )
     s4.metric("Uncategorized", int((filtered_df["category"] == "Uncategorized").sum()))
 
     st.write("### Review and edit categories")
 
     category_options = get_category_options()
 
-    editable_df = filtered_df[
-        ["date", "description", "amount", "transaction_type", "category", "category_confidence", "notes"]
-    ].copy()
+    editor_columns = [
+        c for c in [
+            "transaction_id",
+            "date",
+            "description",
+            "amount",
+            "transaction_type",
+            "category",
+            "category_confidence",
+            "notes"
+        ] if c in filtered_df.columns
+    ]
+
+    editable_df = filtered_df[editor_columns].copy()
 
     edited_df = st.data_editor(
         editable_df,
         use_container_width=True,
         num_rows="dynamic",
         column_config={
+            "transaction_id": st.column_config.NumberColumn("Transaction ID", disabled=True),
             "date": st.column_config.DateColumn("Date"),
             "description": st.column_config.TextColumn("Description", width="large"),
             "amount": st.column_config.NumberColumn("Amount", format="%.2f"),
@@ -239,33 +290,35 @@ elif screen == "Screen 2 - Review Categories":
     if st.button("Save category changes", type="primary"):
         base_df = st.session_state.categorized_df.copy()
 
-        update_cols = ["date", "description", "amount", "transaction_type"]
-        merged = base_df.merge(
-            edited_df,
-            on=update_cols,
-            how="left",
-            suffixes=("", "_edited")
-    )
+        if "transaction_id" in base_df.columns and "transaction_id" in edited_df.columns:
+            base_df = base_df.set_index("transaction_id")
+            edited_base = edited_df.set_index("transaction_id")
 
-    for col in ["category", "category_confidence", "notes"]:
-        edited_col = f"{col}_edited"
-        if edited_col in merged.columns:
-            merged[col] = merged[edited_col].combine_first(merged[col])
-            merged.drop(columns=[edited_col], inplace=True)
+            for col in ["transaction_type", "category", "category_confidence", "notes"]:
+                if col in edited_base.columns and col in base_df.columns:
+                    base_df.loc[edited_base.index, col] = edited_base[col]
 
-    st.session_state.categorized_df = merged
-    st.session_state.finwise_result = None
-    st.session_state.finwise_ai_explanation = None
-    st.session_state.finwise_chat_history = []
-    st.success("Category updates saved.")
+            st.session_state.categorized_df = base_df.reset_index()
+        else:
+            update_cols = ["date", "description", "amount", "transaction_type"]
+            merged = base_df.merge(
+                edited_df,
+                on=update_cols,
+                how="left",
+                suffixes=("", "_edited")
+            )
 
-        for col in ["category", "category_confidence", "notes"]:
-            edited_col = f"{col}_edited"
-            if edited_col in merged.columns:
-                merged[col] = merged[edited_col].combine_first(merged[col])
-                merged.drop(columns=[edited_col], inplace=True)
+            for col in ["category", "category_confidence", "notes"]:
+                edited_col = f"{col}_edited"
+                if edited_col in merged.columns:
+                    merged[col] = merged[edited_col].combine_first(merged[col])
+                    merged.drop(columns=[edited_col], inplace=True)
 
-        st.session_state.categorized_df = merged
+            st.session_state.categorized_df = merged
+
+        st.session_state.finwise_result = None
+        st.session_state.finwise_ai_explanation = None
+        st.session_state.finwise_chat_history = []
         st.success("Category updates saved.")
 
     st.write("### Category distribution")
@@ -284,19 +337,18 @@ elif screen == "Screen 2 - Review Categories":
         file_name="categorized_transactions.csv",
         mime="text/csv"
     )
-    
+
 
 # -----------------------------
 # SCREEN 3 - TAX SUMMARY
 # -----------------------------
 elif screen == "Screen 3 - Tax Summary":
+    st.session_state.current_screen = "Screen 3"
     st.subheader("Screen 3: Tax Summary")
 
     if st.session_state.categorized_df is None:
         st.warning("Please complete Screen 1 and Screen 2 first.")
         st.stop()
-
-    from core.brain import run_finwise_brain
 
     col_a, col_b = st.columns([1, 1])
 
@@ -304,12 +356,16 @@ elif screen == "Screen 3 - Tax Summary":
         if st.button("Run FinWise Analysis", type="primary", use_container_width=True):
             result = run_finwise_brain(st.session_state.categorized_df)
             st.session_state.finwise_result = result
+            st.session_state.finwise_ai_explanation = None
+            st.session_state.finwise_chat_history = []
             st.success("FinWise analysis completed.")
 
     with col_b:
         if st.button("Refresh Analysis", use_container_width=True):
             result = run_finwise_brain(st.session_state.categorized_df)
             st.session_state.finwise_result = result
+            st.session_state.finwise_ai_explanation = None
+            st.session_state.finwise_chat_history = []
             st.success("Analysis refreshed.")
 
     if st.session_state.finwise_result is None:
@@ -324,9 +380,6 @@ elif screen == "Screen 3 - Tax Summary":
     opportunities = result["opportunities"]
     summary_text = result["summary_text"]
 
-    # -----------------------------
-    # SUMMARY CARDS
-    # -----------------------------
     st.write("## Tax Summary")
 
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -336,9 +389,6 @@ elif screen == "Screen 3 - Tax Summary":
     m4.metric("Taxable Income", f"${tax_summary['taxable_income']:,.2f}")
     m5.metric("Estimated Tax", f"${tax_summary['estimated_tax']:,.2f}")
 
-    # -----------------------------
-    # OPPORTUNITIES
-    # -----------------------------
     st.write("## Tax-Saving Opportunities")
 
     if opportunities:
@@ -357,18 +407,13 @@ elif screen == "Screen 3 - Tax Summary":
     else:
         st.success("No major tax-saving opportunities detected yet.")
 
-    # -----------------------------
-    # CATEGORY SUMMARY
-    # -----------------------------
     st.write("## Category Summary")
     st.dataframe(category_summary, use_container_width=True)
 
-    # -----------------------------
-    # DETAILED TRANSACTIONS
-    # -----------------------------
     st.write("## Detailed Transactions with Tax Treatment")
 
     display_cols = [
+        "transaction_id",
         "date",
         "description",
         "amount",
@@ -379,17 +424,10 @@ elif screen == "Screen 3 - Tax Summary":
         "rule_type",
         "rule_explanation"
     ]
-
     available_cols = [col for col in display_cols if col in transactions.columns]
 
-    st.dataframe(
-        transactions[available_cols],
-        use_container_width=True
-    )
+    st.dataframe(transactions[available_cols], use_container_width=True)
 
-    # -----------------------------
-    # EXPLANATION
-    # -----------------------------
     st.write("## FinWise Explanation")
     st.text_area(
         "Summary",
@@ -397,9 +435,6 @@ elif screen == "Screen 3 - Tax Summary":
         height=250
     )
 
-    # -----------------------------
-    # DOWNLOAD ENRICHED CSV
-    # -----------------------------
     csv = transactions.to_csv(index=False).encode("utf-8")
     st.download_button(
         "Download Tax-Enriched Transactions CSV",
@@ -408,20 +443,24 @@ elif screen == "Screen 3 - Tax Summary":
         mime="text/csv"
     )
 
+
 # -----------------------------
 # SCREEN 4 - AI ASSISTANT
 # -----------------------------
 elif screen == "Screen 4 - AI Assistant":
+    st.session_state.current_screen = "Screen 4"
     st.subheader("Screen 4: AI Explanation & Ask FinWise")
 
     if st.session_state.finwise_result is None:
         st.warning("Please complete Screen 3 and run FinWise analysis first.")
         st.stop()
 
-    import os
-    from core.ai_helper import get_openai_client, generate_ai_explanation, answer_finwise_chat
+    from core.ai_helper import (
+        get_openai_client,
+        generate_ai_explanation,
+        answer_finwise_chat
+    )
 
-    # Get API key
     api_key = None
 
     try:
@@ -438,13 +477,11 @@ elif screen == "Screen 4 - AI Assistant":
 
     tab1, tab2 = st.tabs(["AI Explanation", "Ask FinWise"])
 
-    # -----------------------------
-    # TAB 1 - AI EXPLANATION
-    # -----------------------------
     with tab1:
         st.write("Generate a simple explanation of your tax summary and savings opportunities.")
 
         col1, col2 = st.columns([1, 1])
+
         with col1:
             if st.button("Generate AI Explanation", type="primary", use_container_width=True):
                 with st.spinner("Generating AI explanation..."):
@@ -471,13 +508,9 @@ elif screen == "Screen 4 - AI Assistant":
         else:
             st.info("Click 'Generate AI Explanation' to create a summary.")
 
-    # -----------------------------
-    # TAB 2 - CHATBOT
-    # -----------------------------
     with tab2:
         st.write("Ask questions about your uploaded transactions, deductions, and tax-saving opportunities.")
 
-        # show chat history
         for msg in st.session_state.finwise_chat_history:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
