@@ -245,7 +245,19 @@ elif screen == "Screen 2 - Review Categories":
             on=update_cols,
             how="left",
             suffixes=("", "_edited")
-        )
+    )
+
+    for col in ["category", "category_confidence", "notes"]:
+        edited_col = f"{col}_edited"
+        if edited_col in merged.columns:
+            merged[col] = merged[edited_col].combine_first(merged[col])
+            merged.drop(columns=[edited_col], inplace=True)
+
+    st.session_state.categorized_df = merged
+    st.session_state.finwise_result = None
+    st.session_state.finwise_ai_explanation = None
+    st.session_state.finwise_chat_history = []
+    st.success("Category updates saved.")
 
         for col in ["category", "category_confidence", "notes"]:
             edited_col = f"{col}_edited"
