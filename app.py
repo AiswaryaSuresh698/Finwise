@@ -56,6 +56,7 @@ screen = st.sidebar.radio(
         "Screen 2 - Review Categories",
         "Screen 3 - Tax Summary",
         "Screen 4 - AI Assistant"
+        "Screen 5 - Filing Guide"
     ]
 )
 
@@ -552,3 +553,193 @@ elif screen == "Screen 4 - AI Assistant":
             if st.button("Clear AI Explanation"):
                 st.session_state.finwise_ai_explanation = None
                 st.rerun()
+
+# -----------------------------
+# SCREEN 5 - FILING GUIDE
+# -----------------------------
+elif screen == "Screen 5 - Filing Guide":
+    st.session_state.current_screen = "Screen 5"
+    st.subheader("Screen 5: Tax Filing Guide")
+
+    if st.session_state.finwise_result is None:
+        st.warning("Please complete Screen 3 and run FinWise analysis first.")
+        st.stop()
+
+    result = st.session_state.finwise_result
+    tax_summary = result["tax_summary"]
+    category_summary = result["category_summary"]
+    transactions = result["transactions"]
+
+    st.write("Use this screen to prepare values for tax filing tools like Wealthsimple Tax or TurboTax.")
+
+    # -----------------------------
+    # TOP SUMMARY
+    # -----------------------------
+    st.write("## Filing Summary")
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Business Income", f"${tax_summary['total_income']:,.2f}")
+    a2.metric("Total Expenses", f"${tax_summary['total_expense']:,.2f}")
+    a3.metric("Deductible Expenses", f"${tax_summary['total_deductible']:,.2f}")
+    a4.metric("Estimated Net Income", f"${tax_summary['taxable_income']:,.2f}")
+
+    # -----------------------------
+    # TAX SOFTWARE SELECTION
+    # -----------------------------
+    st.write("## Select Filing Tool")
+    filing_tool = st.selectbox(
+        "Choose where you plan to file",
+        ["Wealthsimple Tax", "TurboTax", "General Filing Format"]
+    )
+
+    # -----------------------------
+    # CATEGORY MAPPING LOGIC
+    # -----------------------------
+    filing_mapping = {
+        "Income": "Business Income",
+        "Software": "Office Expenses / Software",
+        "Meals": "Meals & Entertainment",
+        "Travel": "Travel Expenses",
+        "Marketing": "Advertising / Marketing",
+        "Office Expense": "Office Expenses",
+        "Internet/Phone": "Utilities / Telephone / Internet",
+        "Home Office": "Business Use of Home",
+        "Vehicle": "Motor Vehicle Expenses",
+        "Professional Fees": "Professional Fees",
+        "Insurance": "Insurance",
+        "Bank Fees": "Bank Charges / Fees",
+        "Training/Education": "Training / Education",
+        "Contractor Payments": "Subcontractor / Contract Labour",
+        "Rent": "Rent",
+        "Utilities": "Utilities",
+        "Taxes Paid": "Review Manually",
+        "Uncategorized": "Review Manually"
+    }
+
+    working_summary = category_summary.copy()
+
+    if "transaction_type" in working_summary.columns:
+        working_summary = working_summary[
+            working_summary["transaction_type"].astype(str).str.lower() == "expense"
+        ].copy()
+
+    if "total_deductible" not in working_summary.columns:
+        st.error("Category summary does not contain total_deductible.")
+        st.stop()
+
+    working_summary["filing_field"] = working_summary["category"].map(filing_mapping).fillna("Review Manually")
+
+    filing_table = (
+        working_summary.groupby(["filing_field"], dropna=False)
+        .agg(
+            total_deductible=("total_deductible", "sum"),
+            source_categories=("category", lambda x: ", ".join(sorted(set(map(str, x)))))
+        )
+        .reset_index()
+        .sort_values("total_deductible", ascending=False)
+    )
+
+    filing_table["total_deductible"] = filing_table["total_deductible"].round(2)
+
+    # -----------------------------
+    # WHAT TO ENTER TABLE
+    # -----------------------------
+    st.write(f"## What to Enter in {filing_tool}")
+
+    st.dataframe(
+        filing_table.rename(columns={
+            "filing_field": "Tax Software Field",
+            "total_deductible": "Amount to Enter",
+            "source_categories": "Comes From"
+        }),
+        use_container_width=True
+    )
+
+    # -----------------------------
+    # STEP-BY-STEP GUIDE
+    # -----------------------------
+    st.write("## Step-by-Step Filing Guide")
+
+    step_lines = []
+    step_lines.append(f"1. Open {filing_tool}.")
+    step_lines.append("2. Go to the self-employment or business income section.")
+    step_lines.append(f"3. Enter Business Income = ${tax_summary['total_income']:,.2f}.")
+    step_lines.append("4. Enter the deductible expense values below:")
+    for _, row in filing_table.iterrows():
+        if float(row["total_deductible"]) > 0:
+            step_lines.append(f"   - {row['filing_field']}: ${row['total_deductible']:,.2f}")
+    step_lines.append(f"5. Estimated net income after deductions: ${tax_summary['taxable_income']:,.2f}.")
+    step_lines.append("6. Review manually flagged items such as Uncategorized or Taxes Paid before filing.")
+
+    for line in step_lines:
+        st.write(line)
+
+    # -----------------------------
+    # COPY/PASTE BLOCK
+    # -----------------------------
+    st.write("## Copy/Paste Filing Notes")
+
+    filing_text_lines = []
+    filing_text_lines.append(f"Filing Tool: {filing_tool}")
+    filing_text_lines.append("")
+    filing_text_lines.append(f"Business Income: ${tax_summary['total_income']:,.2f}")
+    filing_text_lines.append(f"Total Expenses: ${tax_summary['total_expense']:,.2f}")
+    filing_text_lines.append(f"Deductible Expenses: ${tax_summary['total_deductible']:,.2f}")
+    filing_text_lines.append(f"Estimated Net Income: ${tax_summary['taxable_income']:,.2f}")
+    filing_text_lines.append("")
+    filing_text_lines.append("Enter these deductible amounts:")
+    for _, row in filing_table.iterrows():
+        if float(row["total_deductible"]) > 0:
+            filing_text_lines.append(f"- {row['filing_field']}: ${row['total_deductible']:,.2f}")
+    filing_text_lines.append("")
+    filing_text_lines.append("Review manually:")
+    manual_review_rows = filing_table[filing_table["filing_field"] == "Review Manually"]
+    if not manual_review_rows.empty:
+        for _, row in manual_review_rows.iterrows():
+            filing_text_lines.append(f"- {row['Comes From'] if 'Comes From' in row else row['source_categories']}")
+    else:
+        filing_text_lines.append("- No manually flagged categories")
+
+    filing_text = "\n".join(filing_text_lines)
+
+    st.text_area(
+        "Prepared Filing Notes",
+        value=filing_text,
+        height=300
+    )
+
+    # -----------------------------
+    # DOWNLOAD BUTTONS
+    # -----------------------------
+    filing_csv = filing_table.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Filing Guide CSV",
+        data=filing_csv,
+        file_name="finwise_filing_guide.csv",
+        mime="text/csv"
+    )
+
+    filing_text_bytes = filing_text.encode("utf-8")
+    st.download_button(
+        "Download Filing Notes TXT",
+        data=filing_text_bytes,
+        file_name="finwise_filing_notes.txt",
+        mime="text/plain"
+    )
+
+    # -----------------------------
+    # OPTIONAL DETAIL VIEW
+    # -----------------------------
+    with st.expander("Show detailed transactions behind filing guide"):
+        display_cols = [
+            "transaction_id",
+            "date",
+            "description",
+            "amount",
+            "transaction_type",
+            "category",
+            "deductible_percent",
+            "deductible_amount"
+        ]
+        available_cols = [col for col in display_cols if col in transactions.columns]
+        st.dataframe(transactions[available_cols], use_container_width=True)
