@@ -56,7 +56,8 @@ screen = st.sidebar.radio(
         "Screen 2 - Review Categories",
         "Screen 3 - Tax Summary",
         "Screen 4 - AI Assistant",
-        "Screen 5 - Filing Guide"
+        "Screen 5 - Filing Guide",
+        "Screen 6 - Receipt Scanner"
     ]
 )
 
