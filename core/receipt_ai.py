@@ -1,14 +1,13 @@
-# core/receipt_ai.py
-
 import base64
 import json
 from io import BytesIO
+
+import fitz
 from PIL import Image
-import fitz  # PyMuPDF
 from openai import OpenAI
 
 
-def get_openai_client(api_key: str):
+def get_client(api_key: str):
     return OpenAI(api_key=api_key)
 
 
@@ -23,45 +22,45 @@ def pdf_to_images(uploaded_file, max_pages=3):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
     images = []
-    for page_num in range(min(len(doc), max_pages)):
-        page = doc[page_num]
+    for i in range(min(len(doc), max_pages)):
+        page = doc[i]
         pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-        img = Image.open(BytesIO(pix.tobytes("png")))
-        images.append(img)
+        image = Image.open(BytesIO(pix.tobytes("png"))).convert("RGB")
+        images.append(image)
 
     return images
 
 
-def extract_receipt_data(client, image: Image.Image, model="gpt-4.1-mini") -> dict:
+def extract_bill_details(client, image: Image.Image, model="gpt-4.1-mini") -> dict:
     image_b64 = image_to_base64(image)
 
     prompt = """
-Extract structured bookkeeping data from this receipt, bill, invoice, or payment document.
+Analyze this bill, receipt, invoice, or payment document.
 
-Return ONLY valid JSON.
+Extract only the details needed for an Excel bookkeeping table.
 
-Fields:
+Return ONLY valid JSON in this format:
+
 {
   "transaction_type": "expense or income",
   "date": "YYYY-MM-DD or empty",
-  "vendor_or_customer": "merchant/vendor/customer name",
+  "name": "vendor name if expense, customer name if income",
   "description": "short description",
   "category": "Meals, Tools, Software, Office Expense, Employee Cost, Contractor Payment, Rent, Utilities, Internet/Phone, Vehicle, Marketing, Professional Fees, Insurance, Bank Fees, Travel, Income, Uncategorized",
-  "subtotal": number,
-  "tax": number,
-  "total": number,
-  "currency": "CAD or unknown",
-  "confidence": "high, medium, low",
-  "notes": "short note"
+  "subtotal": 0,
+  "tax": 0,
+  "total": 0,
+  "currency": "CAD",
+  "confidence": "high, medium, low"
 }
 
 Rules:
-- If this is a purchase receipt or bill, transaction_type = expense.
-- If this is an invoice issued to a customer or client payment, transaction_type = income.
+- Receipt/bill paid by user = expense.
+- Invoice issued to client/customer = income.
 - If unsure, use expense.
-- Use total as the final amount paid or received.
-- If tax is not visible, use 0.
+- If tax is missing, use 0.
 - If category is unclear, use Uncategorized.
+- Do not add explanations.
 """
 
     response = client.chat.completions.create(
@@ -78,9 +77,9 @@ Rules:
                             "url": f"data:image/png;base64,{image_b64}"
                         }
                     }
-                ]
+                ],
             }
-        ]
+        ],
     )
 
     content = response.choices[0].message.content
@@ -91,13 +90,12 @@ Rules:
         return {
             "transaction_type": "expense",
             "date": "",
-            "vendor_or_customer": "",
-            "description": content,
+            "name": "",
+            "description": "",
             "category": "Uncategorized",
             "subtotal": 0,
             "tax": 0,
             "total": 0,
-            "currency": "unknown",
+            "currency": "CAD",
             "confidence": "low",
-            "notes": "AI response could not be parsed as JSON"
         }
