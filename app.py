@@ -45,9 +45,6 @@ if "finwise_ai_explanation" not in st.session_state:
 if "finwise_chat_history" not in st.session_state:
     st.session_state.finwise_chat_history = []
 
-if "receipt_entries" not in st.session_state:
-    st.session_state.receipt_entries = []
-
 if "bill_entries" not in st.session_state:
     st.session_state.bill_entries = []
 # -----------------------------
@@ -748,17 +745,15 @@ elif screen == "Screen 5 - Filing Guide":
         ]
         available_cols = [col for col in display_cols if col in transactions.columns]
         st.dataframe(transactions[available_cols], use_container_width=True)
+
 # -----------------------------
 # SCREEN 6 - BILL SCANNER
 # -----------------------------
 elif screen == "Screen 6 - Bill Scanner":
     st.subheader("Screen 6: Bill / Receipt Scanner")
 
-    import os
     from io import BytesIO
-    import pandas as pd
     from PIL import Image
-
     from core.receipt_ai import (
         get_client,
         extract_bill_details,
@@ -796,7 +791,11 @@ elif screen == "Screen 6 - Bill Scanner":
                         images = [Image.open(file).convert("RGB")]
 
                     for image in images:
-                        extracted = extract_bill_details(client, image)
+                        try:
+                            extracted = extract_bill_details(client, image)
+                        except Exception as e:
+                            st.error(f"Could not extract {file.name}: {e}")
+                            continue
 
                         st.session_state.bill_entries.append({
                             "date": extracted.get("date", ""),
@@ -898,9 +897,6 @@ elif screen == "Screen 6 - Bill Scanner":
         st.write("### Income")
         st.dataframe(income_df, use_container_width=True)
 
-    # -----------------------------
-    # EXCEL EXPORT
-    # -----------------------------
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
