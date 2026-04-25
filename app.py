@@ -47,6 +47,9 @@ if "finwise_chat_history" not in st.session_state:
 
 if "receipt_entries" not in st.session_state:
     st.session_state.receipt_entries = []
+
+if "bill_entries" not in st.session_state:
+    st.session_state.bill_entries = []
 # -----------------------------
 # Sidebar navigation
 # -----------------------------
@@ -58,7 +61,7 @@ screen = st.sidebar.radio(
         "Screen 3 - Tax Summary",
         "Screen 4 - AI Assistant",
         "Screen 5 - Filing Guide",
-        "Screen 6 - Receipt Scanner"
+        "Screen 6 - Bill Scanner"
     ]
 )
 
@@ -745,18 +748,11 @@ elif screen == "Screen 5 - Filing Guide":
         ]
         available_cols = [col for col in display_cols if col in transactions.columns]
         st.dataframe(transactions[available_cols], use_container_width=True)
-
 # -----------------------------
-# SCREEN 6 - RECEIPT SCANNER
+# SCREEN 6 - BILL SCANNER
 # -----------------------------
-elif screen == "Screen 6 - Receipt Scanner":
-    st.session_state.current_screen = "Screen 6"
-    st.subheader("Screen 6: Receipt / Bill Scanner")
-
-    st.write(
-        "Upload receipt images or PDFs. FinWise will extract details, classify them, "
-        "and create an Excel-style income and expense tracker."
-    )
+elif screen == "Screen 6 - Bill Scanner":
+    st.subheader("Screen 6: Bill / Receipt Scanner")
 
     import os
     from io import BytesIO
@@ -764,14 +760,11 @@ elif screen == "Screen 6 - Receipt Scanner":
     from PIL import Image
 
     from core.receipt_ai import (
-        get_openai_client,
-        extract_receipt_data,
+        get_client,
+        extract_bill_details,
         pdf_to_images
     )
 
-    # -----------------------------
-    # API KEY
-    # -----------------------------
     api_key = None
 
     try:
@@ -780,41 +773,35 @@ elif screen == "Screen 6 - Receipt Scanner":
         api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
-        st.error("OpenAI API key not found. Add OPENAI_API_KEY to Streamlit Secrets.")
+        st.error("OPENAI_API_KEY not found. Add it in Streamlit Secrets.")
         st.stop()
 
-    client = get_openai_client(api_key)
+    client = get_client(api_key)
 
-    # -----------------------------
-    # FILE UPLOAD
-    # -----------------------------
     uploaded_files = st.file_uploader(
-        "Upload receipts, bills, invoices, or PDFs",
+        "Upload bill images or PDFs",
         type=["png", "jpg", "jpeg", "pdf"],
         accept_multiple_files=True
     )
 
     if uploaded_files:
-        if st.button("Extract Entries", type="primary"):
-            with st.spinner("Reading files and extracting entries..."):
-                for uploaded_file in uploaded_files:
-                    file_name = uploaded_file.name.lower()
-
-                    images = []
+        if st.button("Analyze Bills", type="primary"):
+            with st.spinner("AI is reading your bills..."):
+                for file in uploaded_files:
+                    file_name = file.name.lower()
 
                     if file_name.endswith(".pdf"):
-                        images = pdf_to_images(uploaded_file, max_pages=3)
+                        images = pdf_to_images(file)
                     else:
-                        image = Image.open(uploaded_file).convert("RGB")
-                        images = [image]
+                        images = [Image.open(file).convert("RGB")]
 
                     for image in images:
-                        extracted = extract_receipt_data(client, image)
+                        extracted = extract_bill_details(client, image)
 
-                        entry = {
+                        st.session_state.bill_entries.append({
                             "date": extracted.get("date", ""),
-                            "transaction_type": extracted.get("transaction_type", "expense").lower(),
-                            "vendor_or_customer": extracted.get("vendor_or_customer", ""),
+                            "transaction_type": extracted.get("transaction_type", "expense"),
+                            "name": extracted.get("name", ""),
                             "description": extracted.get("description", ""),
                             "category": extracted.get("category", "Uncategorized"),
                             "subtotal": float(extracted.get("subtotal", 0) or 0),
@@ -822,31 +809,22 @@ elif screen == "Screen 6 - Receipt Scanner":
                             "total": float(extracted.get("total", 0) or 0),
                             "currency": extracted.get("currency", "CAD"),
                             "confidence": extracted.get("confidence", "medium"),
-                            "notes": extracted.get("notes", ""),
-                            "source_file": uploaded_file.name
-                        }
+                            "source_file": file.name
+                        })
 
-                        st.session_state.receipt_entries.append(entry)
+            st.success("Bills analyzed successfully.")
 
-            st.success("Extraction completed.")
-
-    # -----------------------------
-    # MANUAL RESET
-    # -----------------------------
-    if st.button("Clear All Extracted Entries"):
-        st.session_state.receipt_entries = []
+    if st.button("Clear All Entries"):
+        st.session_state.bill_entries = []
         st.rerun()
 
-    # -----------------------------
-    # DISPLAY TABLES
-    # -----------------------------
-    if not st.session_state.receipt_entries:
-        st.info("No extracted entries yet.")
+    if not st.session_state.bill_entries:
+        st.info("Upload bills to generate Excel entries.")
         st.stop()
 
-    df = pd.DataFrame(st.session_state.receipt_entries)
+    df = pd.DataFrame(st.session_state.bill_entries)
 
-    st.write("## Review Extracted Entries")
+    st.write("### Review Excel Entries")
 
     category_options = [
         "Meals",
@@ -884,18 +862,14 @@ elif screen == "Screen 6 - Receipt Scanner":
             "subtotal": st.column_config.NumberColumn("Subtotal", format="%.2f"),
             "tax": st.column_config.NumberColumn("Tax", format="%.2f"),
             "total": st.column_config.NumberColumn("Total", format="%.2f"),
-        },
-        key="receipt_editor"
+        }
     )
 
-    if st.button("Save Edited Entries", type="primary"):
-        st.session_state.receipt_entries = edited_df.to_dict(orient="records")
-        st.success("Edited entries saved.")
+    if st.button("Save Edited Table"):
+        st.session_state.bill_entries = edited_df.to_dict(orient="records")
+        st.success("Saved.")
 
-    # -----------------------------
-    # SPLIT EXPENSE AND INCOME
-    # -----------------------------
-    final_df = pd.DataFrame(st.session_state.receipt_entries)
+    final_df = pd.DataFrame(st.session_state.bill_entries)
 
     expense_df = final_df[
         final_df["transaction_type"].astype(str).str.lower() == "expense"
@@ -908,7 +882,7 @@ elif screen == "Screen 6 - Receipt Scanner":
     total_expense = expense_df["total"].sum() if not expense_df.empty else 0
     total_income = income_df["total"].sum() if not income_df.empty else 0
 
-    st.write("## Income and Expense Summary")
+    st.write("### Totals")
 
     c1, c2 = st.columns(2)
     c1.metric("Total Expenses", f"${total_expense:,.2f}")
@@ -918,69 +892,28 @@ elif screen == "Screen 6 - Receipt Scanner":
 
     with left:
         st.write("### Expenses")
-        if not expense_df.empty:
-            st.dataframe(
-                expense_df[
-                    [
-                        "date",
-                        "vendor_or_customer",
-                        "description",
-                        "category",
-                        "subtotal",
-                        "tax",
-                        "total",
-                        "confidence"
-                    ]
-                ],
-                use_container_width=True
-            )
-        else:
-            st.info("No expenses found.")
+        st.dataframe(expense_df, use_container_width=True)
 
     with right:
         st.write("### Income")
-        if not income_df.empty:
-            st.dataframe(
-                income_df[
-                    [
-                        "date",
-                        "vendor_or_customer",
-                        "description",
-                        "category",
-                        "subtotal",
-                        "tax",
-                        "total",
-                        "confidence"
-                    ]
-                ],
-                use_container_width=True
-            )
-        else:
-            st.info("No income entries found.")
+        st.dataframe(income_df, use_container_width=True)
 
     # -----------------------------
-    # CREATE EXCEL DOWNLOAD
+    # EXCEL EXPORT
     # -----------------------------
-    st.write("## Download Excel")
-
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # Sheet 1: Combined ledger
         final_df.to_excel(writer, index=False, sheet_name="All Entries")
 
-        # Sheet 2: Expense left + Income right
         max_len = max(len(expense_df), len(income_df))
 
-        expense_export = expense_df.reset_index(drop=True)
-        income_export = income_df.reset_index(drop=True)
+        expense_export = expense_df.reset_index(drop=True).reindex(range(max_len))
+        income_export = income_df.reset_index(drop=True).reindex(range(max_len))
 
-        expense_export = expense_export.reindex(range(max_len))
-        income_export = income_export.reindex(range(max_len))
-
-        combined_sheet = pd.DataFrame({
+        excel_view = pd.DataFrame({
             "Expense Date": expense_export.get("date"),
-            "Expense Vendor": expense_export.get("vendor_or_customer"),
+            "Expense Name": expense_export.get("name"),
             "Expense Description": expense_export.get("description"),
             "Expense Category": expense_export.get("category"),
             "Expense Subtotal": expense_export.get("subtotal"),
@@ -988,7 +921,7 @@ elif screen == "Screen 6 - Receipt Scanner":
             "Expense Total": expense_export.get("total"),
 
             "Income Date": income_export.get("date"),
-            "Income Customer": income_export.get("vendor_or_customer"),
+            "Income Name": income_export.get("name"),
             "Income Description": income_export.get("description"),
             "Income Category": income_export.get("category"),
             "Income Subtotal": income_export.get("subtotal"),
@@ -996,32 +929,20 @@ elif screen == "Screen 6 - Receipt Scanner":
             "Income Total": income_export.get("total"),
         })
 
-        combined_sheet.to_excel(writer, index=False, sheet_name="Income Expense View")
+        excel_view.to_excel(writer, index=False, sheet_name="Income Expense View")
 
-        # Sheet 3: Totals
         totals_df = pd.DataFrame([
             {"Metric": "Total Income", "Amount": total_income},
             {"Metric": "Total Expense", "Amount": total_expense},
             {"Metric": "Net Income", "Amount": total_income - total_expense},
         ])
-
         totals_df.to_excel(writer, index=False, sheet_name="Totals")
-
-        # Sheet 4: Category Summary
-        category_summary = (
-            final_df.groupby(["transaction_type", "category"], dropna=False)["total"]
-            .sum()
-            .reset_index()
-            .sort_values(["transaction_type", "total"], ascending=[True, False])
-        )
-
-        category_summary.to_excel(writer, index=False, sheet_name="Category Summary")
 
     output.seek(0)
 
     st.download_button(
-        label="Download Excel File",
+        "Download Excel",
         data=output,
-        file_name="finwise_receipt_entries.xlsx",
+        file_name="finwise_bill_entries.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
