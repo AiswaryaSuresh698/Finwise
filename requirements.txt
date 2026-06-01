@@ -1,8 +1,0 @@
-streamlit
-pandas
-openpyxl
-boto3
-python-dotenv
-openai
-pillow
-PyMuPDF
